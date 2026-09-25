@@ -21,3 +21,9 @@ rebel.xml
 /.apt_generated_tests/
 hs_err_pid*.log
 replay_pid*.log
+
+# solo 跑题副产（勿提交）
+run.log
+run.err.log
+run.pid
+
