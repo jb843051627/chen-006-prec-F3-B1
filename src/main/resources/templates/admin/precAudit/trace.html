@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('购买许可核签受理纸')"/>
+    <style>
+        body { background: #f2f2f2; }
+        .paper { margin: 14px; background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; }
+        .paper-head { padding: 14px 20px; border-bottom: 2px solid #1e9fff; }
+        .paper-head h2 { margin: 0; font-size: 18px; color: #1e3a5f; }
+        .paper-head .sub { margin-top: 6px; color: #888; font-size: 13px; }
+        .bill-grid { padding: 14px 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 24px; }
+        .bill-grid .item label { color: #999; margin-right: 8px; }
+        .bill-grid .item.full { grid-column: 1 / -1; }
+        .audit-bar { margin: 0 14px; padding: 10px 16px; border-radius: 4px; font-size: 13px; }
+        .audit-ok { background: #f0f9eb; color: #3a8a3a; border: 1px solid #c2e7b0; }
+        .audit-bad { background: #fef0f0; color: #d83939; border: 1px solid #fbc4c4; }
+        .nodes { padding: 6px 14px 14px 14px; }
+        .node { border: 1px solid #e6e6e6; border-radius: 4px; margin-top: 12px; overflow: hidden; }
+        .node.current { border-color: #1e9fff; box-shadow: 0 0 0 2px rgba(30,159,255,.08); }
+        .node.passed { border-color: #c2e7b0; }
+        .node.dead { border-color: #fbc4c4; }
+        .node-title { padding: 10px 16px; background: #fafafa; display: flex; align-items: center; justify-content: space-between; }
+        .node.current .node-title { background: #ecf5ff; }
+        .node.passed .node-title { background: #f0f9eb; }
+        .node.dead .node-title { background: #fef0f0; }
+        .node-title .name { font-weight: 600; font-size: 15px; }
+        .node-title .meta { color: #888; font-size: 13px; }
+        table.signs { width: 100%; border-collapse: collapse; font-size: 13px; }
+        table.signs th, table.signs td { padding: 8px 12px; border-top: 1px solid #f0f0f0; text-align: left; }
+        table.signs th { background: #fcfcfc; color: #777; font-weight: normal; }
+        .empty { padding: 14px 16px; color: #bbb; font-size: 13px; }
+        .ops { padding: 12px 20px; text-align: center; border-top: 1px dashed #e8e8e8; }
+        .ops .pear-btn, .ops .layui-btn { margin: 0 6px; }
+        .archived { margin: 0 14px 16px 14px; }
+        .archived summary { cursor: pointer; color: #999; font-size: 13px; padding: 8px 0; }
+        .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+        .tag-sign { background: #e8f3ff; color: #1e6fbf; }
+        .tag-veto { background: #fef0f0; color: #d83939; }
+        .tag-slot { background: #f4f4f5; color: #666; margin-right: 6px; }
+    </style>
+</head>
+<body>
+<input type="hidden" id="billId" th:value="${id}">
+<input type="hidden" id="loginName" th:value="${loginName}">
+<!-- 权限标记：shiro 标签只在服务端解析的元素上生效，JS 据此决定出不出按钮 -->
+<span id="permSign" shiro:hasPermission="precAudit:sign" hidden></span>
+<span id="permVeto" shiro:hasPermission="precAudit:veto" hidden></span>
+<span id="permResubmit" shiro:hasPermission="precAudit:resubmit" hidden></span>
+<span id="permIssue" shiro:hasPermission="precAudit:issue" hidden></span>
+
+<div class="paper">
+    <div class="paper-head">
+        <h2>易制毒化学品购买许可报批 · 核签受理纸</h2>
+        <div class="sub" id="headSub">加载中…</div>
+    </div>
+
+    <div id="auditBar"></div>
+
+    <div class="bill-grid" id="billGrid"></div>
+
+    <div class="nodes" id="nodes"></div>
+
+    <div class="archived" id="archivedBox" style="display:none;">
+        <details>
+            <summary id="archivedSummary"></summary>
+            <div id="archivedBody"></div>
+        </details>
+    </div>
+</div>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['jquery', 'layer', 'laydate'], function () {
+        let $ = layui.jquery;
+        let layer = layui.layer;
+        let laydate = layui.laydate;
+        let MP = rootPath + "/precAudit/";
+        let id = $('#billId').val();
+        let login = $('#loginName').val();
+        let trace = null;
+        let roster = [];
+        let CAN = {
+            sign: $('#permSign').length > 0,
+            veto: $('#permVeto').length > 0,
+            resubmit: $('#permResubmit').length > 0,
+            issue: $('#permIssue').length > 0
+        };
+
+        const NODE_STATUS = {0: '在派出所预审', 1: '在大队复核', 2: '在市局核签'};
+
+        function esc(s) {
+            if (s === null || s === undefined) return '';
+            return String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+        }
+
+        function load() {
+            $.when(
+                $.get(MP + 'traceData', {id: id}),
+                $.get(MP + 'roster')
+            ).done(function (a, b) {
+                let r1 = a[0], r2 = b[0];
+                if (r1.code !== 200) { layer.msg(r1.msg || '加载失败', {icon: 2}); return; }
+                trace = r1.data;
+                roster = (r2.code === 200 && r2.data) ? r2.data : [];
+                render();
+            }).fail(function () { layer.msg('受理纸数据加载失败', {icon: 2}); });
+        }
+
+        function render() {
+            let bill = trace.bill;
+            let statusText = ['在核中', '已出证', '已道否'][bill.status];
+            $('#headSub').text('报批单号 ' + bill.billNo
+                + '　·　第 ' + bill.roundNo + ' 轮'
+                + '　·　' + statusText
+                + '　·　递单 ' + (bill.createTime || ''));
+
+            // 账面核对条：屏上积数与账上积数必须一处来
+            let bar = $('#auditBar');
+            if (trace.matched) {
+                bar.html('<div class="audit-bar audit-ok">账面对得上：本轮有效画押 屏上 <b>'
+                    + trace.storedSignTotal + '</b> 枚 ＝ 流水账现数 <b>'
+                    + trace.countedSignTotal + '</b> 枚</div>');
+            } else {
+                bar.html('<div class="audit-bar audit-bad">账面对不上！屏上 '
+                    + trace.storedSignTotal + ' 枚 ≠ 账上 ' + trace.countedSignTotal
+                    + ' 枚，此单暂不能认，请联系系统管理员核查流水账</div>');
+            }
+
+            let permitRow = bill.status === 1
+                ? '<div class="item full"><label>许可证编号</label><b>' + esc(bill.permitNo) + '</b>'
+                  + '<label style="margin-left:24px">凭证期限至</label><b>' + esc(bill.permitDue) + '</b>'
+                  + '<label style="margin-left:24px">出证时刻</label>' + esc(bill.issueTime) + '</div>'
+                : '';
+            let vetoRow = bill.status === 2
+                ? '<div class="item full"><label>道否事由</label><span style="color:#d83939">'
+                  + esc(bill.vetoReason || '（未填事由）') + '</span></div>'
+                : '';
+            $('#billGrid').html(
+                '<div class="item"><label>品种</label><b>' + esc(bill.chemName) + '</b></div>'
+                + '<div class="item"><label>数量</label><b>' + esc(bill.qty) + ' ' + esc(bill.unit) + '</b></div>'
+                + '<div class="item"><label>存放库房</label>' + esc(bill.storeSiteNo) + '</div>'
+                + '<div class="item full"><label>用途</label>' + esc(bill.purpose) + '</div>'
+                + (bill.remark ? '<div class="item full"><label>备注</label>' + esc(bill.remark) + '</div>' : '')
+                + permitRow + vetoRow
+            );
+
+            // 三道门：末道在前，一格一格往回捋
+            let html = '';
+            trace.nodes.forEach(function (n) {
+                let cls = '';
+                if (bill.status === 2 && bill.vetoNode === n.nodeNo) cls = 'dead';
+                else if (bill.status === 0 && bill.nodeNo === n.nodeNo) cls = 'current';
+                else if (bill.status === 1 || bill.nodeNo > n.nodeNo
+                         || (bill.status === 0 && bill.nodeNo === 3)) cls = 'passed';
+
+                let modeText = n.signMode === 1 ? '名单点齐（' + n.needCount + ' 人各占一席）' : '任一人';
+                let rows = n.signs.map(function (s) {
+                    let isSign = s.action === 1;
+                    return '<tr>'
+                        + '<td style="width:170px">' + esc(s.signTime) + '</td>'
+                        + '<td style="width:150px">' + esc(s.signerName || s.signer)
+                        + (s.slotName ? '<br><span class="tag tag-slot">' + esc(s.slotName) + '</span>' : '')
+                        + '</td>'
+                        + '<td style="width:80px"><span class="tag ' + (isSign ? 'tag-sign' : 'tag-veto') + '">'
+                        + (isSign ? '落押' : '道否') + '</span></td>'
+                        + '<td>' + esc(s.opinion || '') + '</td>'
+                        + '</tr>';
+                }).join('');
+                let body = rows
+                    ? '<table class="signs"><tr><th>几时画的</th><th>谁画的</th><th>动作</th><th>签注</th></tr>' + rows + '</table>'
+                    : '<div class="empty">本道本轮尚无落笔</div>';
+
+                html += '<div class="node ' + cls + '">'
+                    + '<div class="node-title"><span class="name">第' + (n.nodeNo + 1) + '道 · ' + n.nodeName + '</span>'
+                    + '<span class="meta">规矩：' + modeText + '　｜　已到 <b>' + n.signCount + '</b> / 应到 ' + n.needCount + '</span></div>'
+                    + body
+                    + opsFor(bill, n)
+                    + '</div>';
+            });
+            $('#nodes').html(html);
+            bindOps(bill);
+
+            // 历轮勾销旧押，只存档
+            if (trace.archived && trace.archived.length) {
+                $('#archivedBox').show();
+                $('#archivedSummary').text('前 ' + (bill.roundNo - 1) + ' 轮被勾销旧押 ' + trace.archived.length + ' 笔（只存档，不进积数）');
+                let a = trace.archived.map(function (s) {
+                    return '<tr><td>' + esc(s.signTime) + '</td><td>' + esc(s.signerName || s.signer) + '</td>'
+                        + '<td>' + ['派出所预审', '大队复核', '市局核签'][s.nodeNo] + '</td>'
+                        + '<td>第' + s.roundNo + '轮·' + (s.action === 1 ? '落押' : '道否') + '</td></tr>';
+                }).join('');
+                $('#archivedBody').html('<table class="signs"><tr><th style="width:170px">时刻</th><th style="width:150px">人</th><th style="width:120px">道</th><th>来历</th></tr>' + a + '</table>');
+            }
+        }
+
+        function opsFor(bill, n) {
+            // 只在“当前在核道”给操作；末道按点名席位点齐，前两道任一人
+            if (bill.status !== 0 || bill.nodeNo !== n.nodeNo) return '';
+            if (!CAN.sign && !(CAN.veto && (n.nodeNo !== 2 || roster.some(s => s.signer === login)))) return '';
+            let btns = '';
+            if (CAN.sign) {
+                if (n.nodeNo === 2) {
+                    roster.forEach(function (seat) {
+                        let mine = seat.signer === login;
+                        let done = n.signs.some(function (s) { return s.action === 1 && s.slotNo === seat.slotNo; });
+                        let label = (seat.slotNo === 1 ? '① 用途合规 画押' : '② 量数 画押');
+                        btns += '<button type="button" class="layui-btn layui-btn-normal layui-btn-sm" data-act="sign" '
+                            + 'data-node="' + n.nodeNo + '" '
+                            + 'data-slot="' + seat.slotNo + '" ' + ((!mine || done) ? 'disabled' : '') + '>'
+                            + (done ? '✓ ' : '') + label + (mine ? '' : '（点名人：' + esc(seat.signerName || seat.signer) + '）') + '</button>';
+                    });
+                } else {
+                    btns += '<button type="button" class="layui-btn layui-btn-normal layui-btn-sm" data-act="sign" data-node="' + n.nodeNo + '">画押通过</button>';
+                }
+            }
+            let canVeto = CAN.veto && (n.nodeNo !== 2 || roster.some(s => s.signer === login));
+            if (canVeto) {
+                btns += '<button type="button" class="layui-btn layui-btn-danger layui-btn-sm" data-act="veto" data-node="' + n.nodeNo + '">道否（话说死）</button>';
+            }
+            return '<div class="ops">' + btns + '</div>';
+        }
+
+        function bindOps(bill) {
+            $('#nodes button[data-act="sign"]').on('click', function () {
+                let slot = $(this).data('slot');
+                let node = $(this).data('node');
+                layer.prompt({title: '签注（可空）', formType: 2, area: ['380px', '120px']}, function (val, idx) {
+                    layer.close(idx);
+                    post('sign', {id: id, expectNode: node, slotNo: slot || '', opinion: val}, '画押已落账');
+                });
+            });
+            $('#nodes button[data-act="veto"]').on('click', function () {
+                let node = $(this).data('node');
+                layer.prompt({title: '道否事由', formType: 2, area: ['380px', '120px'], value: ''}, function (val, idx) {
+                    if (!$.trim(val)) { layer.msg('道否须写事由', {icon: 2}); return; }
+                    layer.close(idx);
+                    post('veto', {id: id, expectNode: node, reason: val}, '已道否');
+                });
+            });
+
+            // 道否后的打回重报、三道齐后的出证，放在头部下方固定操作条
+            let extra = '';
+            if (bill.status === 2) {
+                extra = CAN.resubmit ? '<div class="ops">'
+                    + '<button type="button" class="pear-btn pear-btn-warming pear-btn-md" id="btnResubmit">打回厂里重报（旧押勾销，回预审重积）</button>'
+                    + '</div>' : '';
+            } else if (bill.status === 0 && bill.nodeNo === 3 && CAN.issue) {
+                extra = '<div class="ops">'
+                    + '<button type="button" class="layui-btn layui-btn-normal layui-btn-md" id="btnIssue">出证（锁品种/量数/期限）</button>'
+                    + '</div>';
+            }
+            $('#nodes').before(extra);
+            $('#btnResubmit').on('click', function () {
+                layer.prompt({title: '打回重报交代（可空）', formType: 2, area: ['380px', '120px']}, function (val, idx) {
+                    layer.close(idx);
+                    post('resubmit', {id: id, reason: val}, '已打回重报');
+                });
+            });
+            $('#btnIssue').on('click', openIssue);
+        }
+
+        function openIssue() {
+            layer.open({
+                type: 1, title: '许可出证', area: ['420px', '280px'],
+                content: '<form class="layui-form" style="padding:20px">'
+                    + '<div class="layui-form-item"><label class="layui-form-label" style="width:90px">许可证编号</label>'
+                    + '<div class="layui-input-block" style="margin-left:120px"><input class="layui-input" id="fPermitNo" placeholder="留空则系统发号 YPG-XK-…"></div></div>'
+                    + '<div class="layui-form-item"><label class="layui-form-label" style="width:90px">凭证期限</label>'
+                    + '<div class="layui-input-block" style="margin-left:120px"><input class="layui-input" id="fPermitDue" placeholder="yyyy-MM-dd HH:mm:ss"></div></div>'
+                    + '<div style="text-align:center"><button type="button" class="layui-btn" id="fIssueOk">确认出证</button></div>'
+                    + '</form>',
+                success: function () {
+                    laydate.render({elem: '#fPermitDue', type: 'datetime', format: 'yyyy-MM-dd HH:mm:ss'});
+                    $('#fIssueOk').on('click', function () {
+                        let due = $('#fPermitDue').val();
+                        if (!due) { layer.msg('须填凭证期限', {icon: 2}); return; }
+                        post('issue', {id: id, permitNo: $('#fPermitNo').val(), permitDue: due}, '已出证', function () {
+                            layer.closeAll();
+                        });
+                    });
+                }
+            });
+        }
+
+        function post(url, data, okMsg, afterOk) {
+            let loading = layer.load();
+            $.ajax({
+                url: MP + url, data: data, dataType: 'json', type: 'post',
+                success: function (res) {
+                    layer.close(loading);
+                    if (res.code === 200) {
+                        layer.msg(okMsg, {icon: 1, time: 1000}, function () {
+                            if (afterOk) afterOk();
+                            load();
+                        });
+                    } else {
+                        layer.msg(res.msg || '操作被拒', {icon: 2, time: 1800});
+                    }
+                },
+                error: function () { layer.close(loading); layer.msg('网络异常', {icon: 2}); }
+            });
+        }
+
+        load();
+    });
+</script>
+</body>
+</html>

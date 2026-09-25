@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:include="include :: header('厂里递单')"/>
+    <style>
+        .mainBox { padding: 18px 20px 0 20px; }
+        .bottom { padding: 10px 20px 20px 20px; text-align: center; }
+        .layui-form-label { width: 100px; }
+        .layui-input-block { margin-left: 130px; }
+    </style>
+</head>
+<body>
+<form class="layui-form">
+    <div class="mainBox">
+        <div class="layui-form-item">
+            <label class="layui-form-label">品种</label>
+            <div class="layui-input-block">
+                <select name="chemName" lay-verify="required">
+                    <option value="">请选择品种</option>
+                    <option value="盐酸">盐酸</option>
+                    <option value="丙酮">丙酮</option>
+                    <option value="硫酸">硫酸</option>
+                    <option value="高锰酸钾">高锰酸钾</option>
+                    <option value="其他三类">其他三类</option>
+                </select>
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">数量</label>
+            <div class="layui-input-inline" style="width:150px;">
+                <input type="number" step="0.01" min="0.01" name="qty" lay-verify="required" autocomplete="off"
+                       placeholder="申报数量" class="layui-input">
+            </div>
+            <div class="layui-input-inline" style="width:110px;">
+                <select name="unit">
+                    <option value="吨">吨</option>
+                    <option value="公斤">公斤</option>
+                </select>
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">用途</label>
+            <div class="layui-input-block">
+                <textarea name="purpose" lay-verify="required" placeholder="本厂用途（如酸洗除锈/溶剂清洗）"
+                          class="layui-textarea"></textarea>
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">存放库房</label>
+            <div class="layui-input-block">
+                <input type="text" name="storeSiteNo" lay-verify="required" autocomplete="off"
+                       placeholder="库房核定号，如 KF00" class="layui-input">
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">备注</label>
+            <div class="layui-input-block">
+                <textarea name="remark" class="layui-textarea"></textarea>
+            </div>
+        </div>
+    </div>
+    <div class="bottom">
+        <button type="submit" class="layui-btn layui-btn-normal layui-btn-sm" lay-submit lay-filter="audit-save">
+            <i class="layui-icon layui-icon-ok"></i> 递交报批
+        </button>
+        <button type="reset" class="layui-btn layui-btn-primary layui-btn-sm">
+            <i class="layui-icon layui-icon-refresh"></i> 重置
+        </button>
+    </div>
+</form>
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['form', 'jquery'], function () {
+        let form = layui.form;
+        let $ = layui.jquery;
+        let MODULE_PATH = rootPath + "/precAudit/";
+
+        form.on('submit(audit-save)', function (data) {
+            $.ajax({
+                url: MODULE_PATH + 'add',
+                data: data.field,
+                dataType: 'json',
+                type: 'post',
+                success: function (result) {
+                    if (result.code === 200) {
+                        layer.msg(result.msg, {icon: 1, time: 1200}, function () {
+                            parent.layer.close(parent.layer.getFrameIndex(window.name));
+                            parent.layui.table.reload('audit-table');
+                        });
+                    } else {
+                        layer.msg(result.msg, {icon: 2, time: 1500});
+                    }
+                }
+            });
+            return false;
+        });
+    });
+</script>
+</body>
+</html>

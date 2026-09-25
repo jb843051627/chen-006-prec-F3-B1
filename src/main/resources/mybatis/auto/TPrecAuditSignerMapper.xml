@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fc.v2.mapper.auto.TPrecAuditSignerMapper">
+
+    <!-- 末道点名查席位：slotNo 为空时按人反查（道否用） -->
+    <select id="findSeat" resultType="com.fc.v2.model.auto.TPrecAuditSigner">
+        SELECT * FROM t_prec_audit_signer
+        WHERE del_flag = 0 AND status = 1 AND node_no = #{nodeNo}
+        AND signer = #{signer}
+        <if test="slotNo != null">AND slot_no = #{slotNo}</if>
+        LIMIT 1
+    </select>
+
+</mapper>

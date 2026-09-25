@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('购买许可核签台账')"/>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-body">
+        <form class="layui-form" action="">
+            <div class="layui-form-item">
+                <label class="layui-form-label">报批单号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="billNo" placeholder="报批单号" class="layui-input">
+                </div>
+                <label class="layui-form-label">品种</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="chemName" placeholder="盐酸/丙酮" class="layui-input">
+                </div>
+                <label class="layui-form-label">在哪道</label>
+                <div class="layui-input-inline">
+                    <select name="nodeNo">
+                        <option value="">全部</option>
+                        <option value="0">派出所预审</option>
+                        <option value="1">大队复核</option>
+                        <option value="2">市局核签</option>
+                        <option value="3">三道齐待出证</option>
+                    </select>
+                </div>
+                <label class="layui-form-label">情形</label>
+                <div class="layui-input-inline">
+                    <select name="status">
+                        <option value="">全部</option>
+                        <option value="0">在核</option>
+                        <option value="1">已出证</option>
+                        <option value="2">已道否</option>
+                    </select>
+                </div>
+                <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="audit-query">
+                    <i class="layui-icon layui-icon-search"></i>
+                    查询
+                </button>
+                <button type="reset" class="pear-btn pear-btn-md">
+                    <i class="layui-icon layui-icon-refresh"></i>
+                    重置
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <table id="audit-table" lay-filter="audit-table"></table>
+    </div>
+</div>
+</body>
+
+<script type="text/html" id="audit-toolbar">
+    <button shiro:hasPermission="precAudit:add" class="pear-btn pear-btn-primary pear-btn-md" lay-event="add">
+        <i class="layui-icon layui-icon-add-1"></i>
+        厂里递单
+    </button>
+</script>
+
+<script type="text/html" id="audit-bar">
+    <button shiro:hasPermission="precAudit:view" class="pear-btn pear-btn-primary pear-btn-sm" lay-event="trace">
+        <i class="layui-icon layui-icon-form"></i>受理纸
+    </button>
+    {{# if(d.status===0 && d.nodeNo===0 && d.signCount===0){ }}
+    <button shiro:hasPermission="precAudit:edit" class="pear-btn pear-btn-warming pear-btn-sm" lay-event="edit">
+        <i class="layui-icon layui-icon-edit"></i>改单
+    </button>
+    {{# } }}
+</script>
+
+<script type="text/html" id="node-tpl">
+    {{# if(d.status===1){ }}
+    <span class="pear-text pear-text-success">已出证</span>
+    {{# } else if(d.status===2){ }}
+    <span class="pear-text" style="color:#FF5722">已道否（第{{d.vetoNode+1}}道折住）</span>
+    {{# } else if(d.nodeNo===3){ }}
+    <span class="pear-text pear-text-warm">三道齐·待出证</span>
+    {{# } else { }}
+    <span class="pear-text pear-text-normal">{{['派出所预审','大队复核','市局核签'][d.nodeNo]}}</span>
+    {{# } }}
+</script>
+
+<script type="text/html" id="status-tpl">
+    {{# if(d.status===0){ }}<span class="layui-badge layui-bg-blue">在核</span>
+    {{# } else if(d.status===1){ }}<span class="layui-badge layui-bg-green">已出证</span>
+    {{# } else { }}<span class="layui-badge" style="background-color:#FF5722">已道否</span>{{# } }}
+</script>
+
+<script type="text/html" id="count-tpl">
+    本道 {{d.signCount}}/{{d.needCount}} ｜ 本轮累计 <b>{{d.signTotal}}</b>
+</script>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form', 'jquery'], function () {
+        let table = layui.table;
+        let form = layui.form;
+        let $ = layui.jquery;
+
+        let MODULE_PATH = rootPath + "/precAudit/";
+        let cols = [[
+            {title: 'ID', field: 'id', align: 'center', hide: true},
+            {title: '报批单号', field: 'billNo', align: 'center', width: 190},
+            {title: '品种', field: 'chemName', align: 'center', width: 90},
+            {title: '数量', field: 'qty', align: 'center', width: 100,
+                templet: function (d) { return d.qty + ' ' + (d.unit || ''); }},
+            {title: '用途', field: 'purpose', align: 'center', minWidth: 160},
+            {title: '存放库房', field: 'storeSiteNo', align: 'center', width: 110},
+            {title: '轮次', field: 'roundNo', align: 'center', width: 70,
+                templet: function (d) { return '第' + d.roundNo + '轮'; }},
+            {title: '单在哪道', field: 'nodeNo', align: 'center', width: 170, templet: '#node-tpl'},
+            {title: '画押积数', align: 'center', width: 160, templet: '#count-tpl'},
+            {title: '情形', field: 'status', align: 'center', width: 90, templet: '#status-tpl'},
+            {title: '递单时间', field: 'createTime', align: 'center', width: 170},
+            {title: '操作', toolbar: '#audit-bar', align: 'center', width: 180, fixed: 'right'}
+        ]];
+
+        table.render({
+            elem: '#audit-table',
+            url: MODULE_PATH + 'list',
+            page: true,
+            method: 'get',
+            cols: cols,
+            skin: 'line',
+            toolbar: '#audit-toolbar',
+            defaultToolbar: [{layEvent: 'refresh', icon: 'layui-icon-refresh'}, 'filter', 'print', 'exports']
+        });
+
+        table.on('tool(audit-table)', function (obj) {
+            if (obj.event === 'trace') {
+                window.openTrace(obj.data.id);
+            } else if (obj.event === 'edit') {
+                window.openEdit(obj.data.id);
+            }
+        });
+
+        table.on('toolbar(audit-table)', function (obj) {
+            if (obj.event === 'add') {
+                window.openAdd();
+            } else if (obj.event === 'refresh') {
+                table.reload('audit-table');
+            }
+        });
+
+        form.on('submit(audit-query)', function (data) {
+            table.reload('audit-table', {where: data.field, page: {curr: 1}});
+            return false;
+        });
+
+        window.openAdd = function () {
+            layer.open({
+                type: 2, title: '厂里递单（购买许可报批）', shade: 0.1,
+                area: ['640px', '600px'], content: MODULE_PATH + 'add'
+            });
+        };
+        window.openTrace = function (id) {
+            layer.open({
+                type: 2, title: '购买许可核签受理纸', shade: 0.1,
+                area: ['960px', '700px'], content: MODULE_PATH + 'trace/' + id
+            });
+        };
+        window.openEdit = function (id) {
+            layer.open({
+                type: 2, title: '预审前改单', shade: 0.1,
+                area: ['640px', '600px'], content: MODULE_PATH + 'edit/' + id
+            });
+        };
+    });
+</script>
+</html>

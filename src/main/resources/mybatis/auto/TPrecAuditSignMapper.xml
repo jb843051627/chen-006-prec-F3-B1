@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fc.v2.mapper.auto.TPrecAuditSignMapper">
+
+    <!-- 有效画押计数：积数唯一来源。各条件空则不参与过滤 -->
+    <select id="countSigns" resultType="int">
+        SELECT COUNT(1) FROM t_prec_audit_sign
+        WHERE del_flag = 0 AND valid = 1
+        <if test="billId != null">AND bill_id = #{billId}</if>
+        <if test="roundNo != null">AND round_no = #{roundNo}</if>
+        <if test="nodeNo != null">AND node_no = #{nodeNo}</if>
+        <if test="slotNo != null">AND slot_no = #{slotNo}</if>
+        <if test="signer != null and signer != ''">AND signer = #{signer}</if>
+        <if test="excludeSlot != null">AND slot_no != #{excludeSlot}</if>
+        <if test="action != null">AND action = #{action}</if>
+    </select>
+
+</mapper>
