@@ -55,13 +55,31 @@ public class TPrecCtrlLineServiceImpl implements ITPrecCtrlLineService {
     private static final Comparator<TPrecCtrlLine> PRIORITY_THEN_LINE_NO_DESC = new Comparator<TPrecCtrlLine>() {
         @Override
         public int compare(TPrecCtrlLine a, TPrecCtrlLine b) {
-            int byPriority = comparePriority(a, b);
-            if (byPriority != 0) {
-                return byPriority;
+            // 先看顺位号：大者先；空顺位排最后
+            Integer pa = a.getPriority();
+            Integer pb = b.getPriority();
+            if (pa != null && pb != null && !pa.equals(pb)) {
+                return Integer.compare(pb, pa);
             }
-            long ia = a.getId() == null ? Long.MIN_VALUE : a.getId();
-            long ib = b.getId() == null ? Long.MIN_VALUE : b.getId();
-            return Long.compare(ib, ia);
+            if (pa != null && pb == null) {
+                return -1;
+            }
+            if (pa == null && pb != null) {
+                return 1;
+            }
+            // 顺位相同（或都空）：比线号 id，大者先——先后钉死，不许随库里摆放次序飘
+            Long ia = a.getId();
+            Long ib = b.getId();
+            if (ia != null && ib != null) {
+                return ib.compareTo(ia);
+            }
+            if (ia != null) {
+                return -1;
+            }
+            if (ib != null) {
+                return 1;
+            }
+            return 0;
         }
     };
 
@@ -98,12 +116,22 @@ public class TPrecCtrlLineServiceImpl implements ITPrecCtrlLineService {
         List<TPrecCtrlLine> all = this.precCtrlLineMapper.selectList(
                 new QueryWrapper<TPrecCtrlLine>().eq("del_flag", 0));
         for (TPrecCtrlLine r : all) {
+            // 只把删掉的剔出去，按期一条条过
             if (r.getDelFlag() != null && r.getDelFlag() != 0) {
                 continue;
             }
-            if (covers(r, dayStr)) {
-                open.add(r);
+            if (r.getRuleCode() == null || r.getRuleCode().trim().isEmpty()) {
+                continue;
             }
+            if (r.getTh1Max() == null && r.getTh2Max() == null && r.getTh3Max() == null) {
+                // 三道界都没填的线当废线跳过
+                continue;
+            }
+            if (!covers(r, dayStr)) {
+                // 当日不作数的线（还没起算/已交棒）不算可用，不许抓旁边日子的线凑
+                continue;
+            }
+            open.add(r);
         }
         open.sort(PRIORITY_THEN_CODE_DESC);
         return open;
@@ -225,13 +253,23 @@ public class TPrecCtrlLineServiceImpl implements ITPrecCtrlLineService {
      * 新线起算当日也作数，重叠由顺位号/线号决胜）。交棒日空=至今有效；起算日空=无起算，不作数。
      */
     private static boolean covers(TPrecCtrlLine r, String dayStr) {
-        if (r.getEffStart() == null) {
-            return false;
+        // 逐段判断这条线在当日作不作数
+        String start = r.getEffStart() == null ? null : day(r.getEffStart());
+        String end = r.getEffEnd() == null ? null : day(r.getEffEnd());
+        if (start == null && end == null) {
+            // 起止都没填：当作一直有效
+            return true;
         }
-        if (dayStr.compareTo(day(r.getEffStart())) < 0) {
-            return false;
+        if (start == null) {
+            // 没填起算：只看交棒，交棒当日仍作数
+            return dayStr.compareTo(end) <= 0;
         }
-        return r.getEffEnd() == null || dayStr.compareTo(day(r.getEffEnd())) <= 0;
+        if (end == null) {
+            // 没填交棒：从起算日往后一直有效
+            return dayStr.compareTo(start) >= 0;
+        }
+        // 两头都填：起算日当日算数，交棒日当日也算数（双闭），重叠当日由顺位号/线号决胜
+        return dayStr.compareTo(start) >= 0 && dayStr.compareTo(end) <= 0;
     }
 
     /**
@@ -265,21 +303,32 @@ public class TPrecCtrlLineServiceImpl implements ITPrecCtrlLineService {
      * 只有 th3 在且浓度压/过它时才回 4）。
      */
     private static int legacyLevelOf(TPrecCtrlLine line, BigDecimal conc) {
-        if (line.getTh1Max() == null) {
+        // 从松到严逐档量过去；压线从严：正压上界即越界，收更严一档
+        BigDecimal th1 = line.getTh1Max();
+        if (th1 == null) {
+            // 免管不设上限：全量免管
             return 1;
         }
-        if (conc.compareTo(line.getTh1Max()) < 0) {
+        if (conc.compareTo(th1) < 0) {
             return 1;
         }
-        if (line.getTh2Max() == null) {
+        BigDecimal th2 = line.getTh2Max();
+        if (th2 == null) {
+            // 三类不设上限：迈过免管就收三类
             return 2;
         }
-        if (conc.compareTo(line.getTh2Max()) < 0) {
+        if (conc.compareTo(th2) < 0) {
             return 2;
         }
-        if (line.getTh3Max() == null || conc.compareTo(line.getTh3Max()) < 0) {
+        BigDecimal th3 = line.getTh3Max();
+        if (th3 == null) {
+            // 二类不设上限：迈过三类就收二类
             return 3;
         }
+        if (conc.compareTo(th3) < 0) {
+            return 3;
+        }
+        // 压着/迈过二类上界
         return 4;
     }
 
